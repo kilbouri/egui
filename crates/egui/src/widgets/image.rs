@@ -267,7 +267,28 @@ impl<'a> Image<'a> {
     #[inline]
     pub fn calc_size(&self, available_size: Vec2, original_image_size: Option<Vec2>) -> Vec2 {
         let original_image_size = original_image_size.unwrap_or(Vec2::splat(24.0)); // Fallback for still-loading textures, or failure to load.
-        self.size.calc_size(available_size, original_image_size)
+
+        // If the image is rotated, we need to consider that the image may have different bounds...
+        let ImageOptions { rotation, .. } = self.image_options;
+        let actual_bounds = if let Some((rot, origin)) = rotation {
+            // The custom UV system set on the image may not have the same aspect ratio as the image.
+            // Hence, we need to remap the origin into the image itself before the rotation.
+            let image_rect = Rect::from_two_pos(Pos2::ZERO, original_image_size.to_pos2());
+            let rotation_origin = vec2(
+                lerp(0.0..=original_image_size.x, origin.x),
+                lerp(0.0..=original_image_size.y, origin.y),
+            );
+
+            image_rect
+                .translate(-rotation_origin)
+                .rotate_bb(rot)
+                .translate(rotation_origin)
+                .size()
+        } else {
+            original_image_size
+        };
+
+        self.size.calc_size(available_size, actual_bounds)
     }
 
     pub fn load_and_calc_size(&self, ui: &Ui, available_size: Vec2) -> Option<Vec2> {
@@ -776,9 +797,20 @@ pub fn paint_texture_at(
                 "Image had both rounding and rotation. Please pick only one"
             );
 
+            // Find the bounding Rect that, when rotated, will be `rect`
+            let rotation_origin = vec2(
+                lerp(rect.x_range(), origin.x),
+                lerp(rect.y_range(), origin.y),
+            );
+
+            let base_rect = rect
+                .translate(-rotation_origin)
+                .rotate_bb(rot.inverse())
+                .translate(rotation_origin);
+
             let mut mesh = Mesh::with_texture(texture.id);
-            mesh.add_rect_with_uv(rect, options.uv, options.tint);
-            mesh.rotate(rot, rect.min + origin * rect.size());
+            mesh.add_rect_with_uv(base_rect, options.uv, options.tint);
+            mesh.rotate(rot, base_rect.min + origin * base_rect.size());
             painter.add(Shape::mesh(mesh));
         }
         None => {
